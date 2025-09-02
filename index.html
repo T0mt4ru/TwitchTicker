@@ -4,15 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sensational News Ticker</title>
-    <!-- We'll use this script to detect the ticker mode immediately -->
-    <script>
-        // Check for the 'ticker' URL parameter right away.
-        const urlParams = new URLSearchParams(window.location.search);
-        const mode = urlParams.get('mode');
-        if (mode === 'ticker') {
-            document.documentElement.classList.add('is-ticker-mode');
-        }
-    </script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@700&display=swap');
@@ -22,9 +13,9 @@
             background-color: rgba(0, 0, 0, 0); /* Transparent background for OBS */
         }
         
-        /* This CSS ensures the config panel is hidden instantly in ticker mode */
-        html.is-ticker-mode #config-panel {
-            display: none !important;
+        /* The config panel is now hidden by default */
+        #config-panel {
+            display: none;
         }
 
         .ticker-container {
@@ -62,7 +53,7 @@
 <body class="bg-gray-900 text-gray-100 flex flex-col items-center justify-center p-4">
     <div class="fixed top-0 left-0 w-full h-full -z-10 bg-gray-900 opacity-90 pointer-events-none"></div>
 
-    <!-- The configuration panel that will be hidden in ticker mode -->
+    <!-- The configuration panel that will be hidden by default -->
     <div id="config-panel" class="w-full max-w-lg bg-gray-800 rounded-lg shadow-xl p-6 mb-4">
         <h1 class="text-2xl font-bold text-center mb-4 text-red-400">Sensational News Ticker</h1>
         <p class="text-sm text-center text-gray-400 mb-6">Connect to your Twitch chat to get started!</p>
@@ -89,6 +80,7 @@
             <input type="text" id="chatMessageInput" placeholder="Or add a message manually..." class="flex-1 p-2 rounded-md bg-gray-700 text-gray-200 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-red-500">
             <button id="addButton" class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors duration-200">Add</button>
         </div>
+
     </div>
 
     <div id="ticker" class="ticker-container">
@@ -98,7 +90,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInWithCustomToken, onAuthStateChanged, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, onSnapshot, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, onSnapshot, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         
         // Firebase global variables. DO NOT CHANGE.
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
@@ -118,6 +110,14 @@
         const connectButton = document.getElementById('connectButton');
         const connectionStatus = document.getElementById('connectionStatus');
         const useLLMCheckbox = document.getElementById('useLLM');
+
+        // Check the URL parameter right away and decide whether to show the config panel.
+        const urlParams = new URLSearchParams(window.location.search);
+        const mode = urlParams.get('mode');
+        if (mode !== 'ticker') {
+            configPanel.style.display = 'block';
+        }
+
 
         // A queue to hold our messages.
         const messageQueue = [];
@@ -313,17 +313,6 @@
             const urlParams = new URLSearchParams(window.location.search);
             const mode = urlParams.get('mode');
 
-            if (mode === 'ticker') {
-                // If in ticker mode, hide the configuration panel
-                configPanel.style.display = 'none';
-                document.body.style.backgroundColor = 'rgba(0, 0, 0, 0)';
-            } else {
-                // Otherwise, show the full configuration panel
-                document.body.classList.remove('bg-gray-900', 'text-gray-100');
-                document.body.classList.add('bg-gray-900', 'text-gray-100');
-            }
-
-
             if (Object.keys(firebaseConfig).length > 0) {
                 const app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
@@ -334,19 +323,35 @@
                         userId = user.uid;
                         const userDocRef = doc(db, `artifacts/${appId}/users/${userId}/settings/twitch_settings`);
                         
-                        // Listen for changes to the user's settings document
-                        onSnapshot(userDocRef, (docSnap) => {
-                            if (docSnap.exists()) {
-                                const data = docSnap.data();
-                                twitchChannelInput.value = data.channel || '';
-                                twitchOAuthInput.value = data.oauth || '';
-                                useLLMCheckbox.checked = data.useLLM || false;
+                        // Immediately fetch the doc after auth
+                        const docSnap = await getDoc(userDocRef);
+                        if (docSnap.exists()) {
+                            const data = docSnap.data();
+                            twitchChannelInput.value = data.channel || '';
+                            twitchOAuthInput.value = data.oauth || '';
+                            useLLMCheckbox.checked = data.useLLM || false;
 
-                                if (data.channel && data.oauth) {
-                                    connectToTwitch(data.channel, data.oauth);
-                                }
+                            if (data.channel && data.oauth) {
+                                connectToTwitch(data.channel, data.oauth);
                             }
-                        });
+                        }
+
+                        // Then, listen for future changes with a small delay
+                        setTimeout(() => {
+                           onSnapshot(userDocRef, (docSnap) => {
+                                if (docSnap.exists()) {
+                                    const data = docSnap.data();
+                                    twitchChannelInput.value = data.channel || '';
+                                    twitchOAuthInput.value = data.oauth || '';
+                                    useLLMCheckbox.checked = data.useLLM || false;
+
+                                    if (data.channel && data.oauth) {
+                                        connectToTwitch(data.channel, data.oauth);
+                                    }
+                                }
+                            });
+                        }, 500);
+
                     } else {
                         try {
                             if (initialAuthToken) {
