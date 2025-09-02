@@ -99,7 +99,10 @@
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
         const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-
+        
+        // Use the Vercel environment variable for the Gemini API key.
+        const geminiApiKey = typeof __gem_app_id !== 'undefined' ? __gem_app_id : '';
+        
         let db;
         let auth;
         let userId;
@@ -142,8 +145,7 @@
         async function sensationalizeMessageWithLLM(username, message) {
             const systemPrompt = "You are a sensational, over-the-top news anchor for a live video game stream. Rewrite the following user's chat message as a shocking, clickbait news headline. Start the headline with an attention-grabbing word like 'BREAKING', 'SHOCKING', or 'URGENT'. The headline should not include any quotations or be a question. The headline should be short and direct.";
             const userQuery = `The username is ${username}. The message is: ${message}. This is a standard chat message.`;
-            const apiKey = typeof __gem_app_id !== 'undefined' ? __gem_app_id : 'default-app-id';
-            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${geminiApiKey}`;
 
             const payload = {
                 contents: [{ parts: [{ text: userQuery }] }],
@@ -354,6 +356,7 @@
 
                 // Button to save Twitch settings
                 connectButton.addEventListener('click', async () => {
+                    // Check if userId is defined before trying to save
                     if (userId) {
                         const channel = twitchChannelInput.value.trim();
                         const oauth = twitchOAuthInput.value.trim();
