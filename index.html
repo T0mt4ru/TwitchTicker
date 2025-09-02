@@ -51,6 +51,7 @@
     </style>
 </head>
 <body class="bg-gray-900 text-gray-100 flex flex-col items-center justify-center p-4">
+    <!-- Overlay for the configuration mode, making the background dark and semi-transparent -->
     <div class="fixed top-0 left-0 w-full h-full -z-10 bg-gray-900 opacity-90 pointer-events-none"></div>
 
     <!-- The configuration panel that will be hidden by default -->
@@ -72,7 +73,7 @@
                 <input type="checkbox" id="useLLM" class="h-4 w-4 text-red-600 focus:ring-red-500 border-gray-600 rounded-md bg-gray-700">
                 <label for="useLLM" class="text-sm font-medium text-gray-400">Use LLM to generate headlines</label>
             </div>
-            <button id="connectButton" class="w-full px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors duration-200">Connect to Twitch</button>
+            <button id="connectButton" class="w-full px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors duration-200">Save and Connect</button>
             <p id="connectionStatus" class="text-center text-sm font-bold"></p>
         </div>
 
@@ -80,17 +81,19 @@
             <input type="text" id="chatMessageInput" placeholder="Or add a message manually..." class="flex-1 p-2 rounded-md bg-gray-700 text-gray-200 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-red-500">
             <button id="addButton" class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors duration-200">Add</button>
         </div>
-
+        <p class="text-xs text-center text-gray-500 mt-4">To view the ticker for OBS, use this URL: <span class="text-yellow-300">your-app-url?mode=ticker</span></p>
     </div>
 
+    <!-- The actual news ticker display at the bottom -->
     <div id="ticker" class="ticker-container">
         <div id="tickerContent" class="ticker-content"></div>
     </div>
 
     <script type="module">
+        // Import Firebase modules for authentication and database operations
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInWithCustomToken, onAuthStateChanged, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, onSnapshot, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, onSnapshot, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         
         // Firebase global variables. DO NOT CHANGE.
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
@@ -101,6 +104,7 @@
         let auth;
         let userId;
 
+        // UI element references
         const configPanel = document.getElementById('config-panel');
         const tickerContent = document.getElementById('tickerContent');
         const chatMessageInput = document.getElementById('chatMessageInput');
@@ -111,13 +115,12 @@
         const connectionStatus = document.getElementById('connectionStatus');
         const useLLMCheckbox = document.getElementById('useLLM');
 
-        // Check the URL parameter right away and decide whether to show the config panel.
+        // Check the URL parameter to determine the display mode
         const urlParams = new URLSearchParams(window.location.search);
         const mode = urlParams.get('mode');
         if (mode !== 'ticker') {
             configPanel.style.display = 'block';
         }
-
 
         // A queue to hold our messages.
         const messageQueue = [];
@@ -132,9 +135,10 @@
             'EXPOSED: "{message}" is the secret new strategy, says {username}.',
             'GLOBAL OUTCRY as {username} demands "{message}"!',
             'They said it couldn\'t be done, but {username} just proved "{message}".',
-            'YOU WONT BELIEVE what {username} said: "{message}"'
+            'YOU WON\'T BELIEVE what {username} said: "{message}"'
         ];
 
+        // Function to call the LLM to generate a headline
         async function sensationalizeMessageWithLLM(username, message) {
             const systemPrompt = "You are a sensational, over-the-top news anchor for a live video game stream. Rewrite the following user's chat message as a shocking, clickbait news headline. Start the headline with an attention-grabbing word like 'BREAKING', 'SHOCKING', or 'URGENT'. The headline should not include any quotations or be a question. The headline should be short and direct.";
             const userQuery = `The username is ${username}. The message is: ${message}. This is a standard chat message.`;
@@ -169,6 +173,7 @@
             return chatTemplates[randomTemplateIndex].replace('{username}', username).replace('{message}', message);
         }
 
+        // Function to get a headline from the queue and add it to the ticker
         async function generateAndAddHeadline() {
             if (messageQueue.length === 0) {
                 return;
@@ -211,11 +216,6 @@
                 tickerContent.style.transform = `translateX(${xOffset}px)`;
             }
             animationFrameId = requestAnimationFrame(animateTicker);
-        }
-
-        // Start the animation loop when the window loads
-        window.onload = function () {
-            animateTicker();
         }
 
         // Periodically add new headlines from the queue
@@ -318,50 +318,37 @@
                 db = getFirestore(app);
                 auth = getAuth(app);
 
+                // Sign in the user with the provided token or anonymously
+                try {
+                    if (initialAuthToken) {
+                        await signInWithCustomToken(auth, initialAuthToken);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+                } catch (error) {
+                    console.error("Firebase Auth Error:", error);
+                }
+
+                // Wait for the auth state to be ready before proceeding
                 onAuthStateChanged(auth, async (user) => {
                     if (user) {
                         userId = user.uid;
                         const userDocRef = doc(db, `artifacts/${appId}/users/${userId}/settings/twitch_settings`);
                         
-                        // Immediately fetch the doc after auth
-                        const docSnap = await getDoc(userDocRef);
-                        if (docSnap.exists()) {
-                            const data = docSnap.data();
-                            twitchChannelInput.value = data.channel || '';
-                            twitchOAuthInput.value = data.oauth || '';
-                            useLLMCheckbox.checked = data.useLLM || false;
+                        // Listen for real-time changes to the settings document
+                        onSnapshot(userDocRef, (docSnap) => {
+                            if (docSnap.exists()) {
+                                const data = docSnap.data();
+                                twitchChannelInput.value = data.channel || '';
+                                twitchOAuthInput.value = data.oauth || '';
+                                useLLMCheckbox.checked = data.useLLM || false;
 
-                            if (data.channel && data.oauth) {
-                                connectToTwitch(data.channel, data.oauth);
-                            }
-                        }
-
-                        // Then, listen for future changes with a small delay
-                        setTimeout(() => {
-                           onSnapshot(userDocRef, (docSnap) => {
-                                if (docSnap.exists()) {
-                                    const data = docSnap.data();
-                                    twitchChannelInput.value = data.channel || '';
-                                    twitchOAuthInput.value = data.oauth || '';
-                                    useLLMCheckbox.checked = data.useLLM || false;
-
-                                    if (data.channel && data.oauth) {
-                                        connectToTwitch(data.channel, data.oauth);
-                                    }
+                                // Connect to Twitch if settings are available
+                                if (data.channel && data.oauth) {
+                                    connectToTwitch(data.channel, data.oauth);
                                 }
-                            });
-                        }, 500);
-
-                    } else {
-                        try {
-                            if (initialAuthToken) {
-                                await signInWithCustomToken(auth, initialAuthToken);
-                            } else {
-                                await signInAnonymously(auth);
                             }
-                        } catch (error) {
-                            console.error("Firebase Auth Error:", error);
-                        }
+                        });
                     }
                 });
 
@@ -387,6 +374,11 @@
                 });
             }
         });
+
+        // Start the animation loop when the window loads
+        window.onload = function () {
+            animateTicker();
+        }
     </script>
 </body>
 </html>
