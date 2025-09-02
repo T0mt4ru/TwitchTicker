@@ -142,7 +142,7 @@
         async function sensationalizeMessageWithLLM(username, message) {
             const systemPrompt = "You are a sensational, over-the-top news anchor for a live video game stream. Rewrite the following user's chat message as a shocking, clickbait news headline. Start the headline with an attention-grabbing word like 'BREAKING', 'SHOCKING', or 'URGENT'. The headline should not include any quotations or be a question. The headline should be short and direct.";
             const userQuery = `The username is ${username}. The message is: ${message}. This is a standard chat message.`;
-            const apiKey = "";
+            const apiKey = "AIzaSyBxMGEovaH506KCUnB95uqfQcHG6oOdE2U";
             const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
 
             const payload = {
