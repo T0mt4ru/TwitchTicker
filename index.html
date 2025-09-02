@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sensational News Ticker</title>
+    <!-- We'll use this script to detect the ticker mode immediately -->
+    <script>
+        // Check for the 'ticker' URL parameter right away.
+        const urlParams = new URLSearchParams(window.location.search);
+        const mode = urlParams.get('mode');
+        if (mode === 'ticker') {
+            document.documentElement.classList.add('is-ticker-mode');
+        }
+    </script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@700&display=swap');
+        body {
+            font-family: 'Roboto Mono', monospace;
+            overflow: hidden;
+            background-color: rgba(0, 0, 0, 0); /* Transparent background for OBS */
+        }
+        
+        /* This CSS ensures the config panel is hidden instantly in ticker mode */
+        html.is-ticker-mode #config-panel {
+            display: none !important;
+        }
+
+        .ticker-container {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 60px;
+            background-color: rgba(255, 255, 255, 0.9);
+            color: #111827;
+            display: flex;
+            align-items: center;
+            white-space: nowrap;
+            overflow: hidden;
+            box-shadow: 0 -4px 6px rgba(0, 0, 0, 0.1);
+            border-top: 4px solid #f87171;
+            padding: 0 1rem;
+        }
+        .ticker-content {
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            height: 100%;
+            will-change: transform; /* Performance boost for animation */
+        }
+        .news-item {
+            display: inline-block;
+            padding-right: 3rem;
+            font-weight: bold;
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100 flex flex-col items-center justify-center p-4">
+    <div class="fixed top-0 left-0 w-full h-full -z-10 bg-gray-900 opacity-90 pointer-events-none"></div>
+
+    <!-- The configuration panel that will be hidden in ticker mode -->
+    <div id="config-panel" class="w-full max-w-lg bg-gray-800 rounded-lg shadow-xl p-6 mb-4">
+        <h1 class="text-2xl font-bold text-center mb-4 text-red-400">Sensational News Ticker</h1>
+        <p class="text-sm text-center text-gray-400 mb-6">Connect to your Twitch chat to get started!</p>
+        
+        <div class="space-y-4">
+            <div>
+                <label for="twitchChannel" class="block text-sm font-medium text-gray-400 mb-1">Twitch Channel Name</label>
+                <input type="text" id="twitchChannel" placeholder="e.g., your_channel" class="w-full p-2 rounded-md bg-gray-700 text-gray-200 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-red-500">
+            </div>
+            <div>
+                <label for="twitchOAuth" class="block text-sm font-medium text-gray-400 mb-1">OAuth Token</label>
+                <input type="password" id="twitchOAuth" placeholder="e.g., oauth:xxxxxxxxxxxxxxxxxx" class="w-full p-2 rounded-md bg-gray-700 text-gray-200 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-red-500">
+                <p class="text-xs text-gray-500 mt-1">For a secure connection, use a token from a bot account and do not share it.</p>
+            </div>
+            <div class="flex items-center space-x-2">
+                <input type="checkbox" id="useLLM" class="h-4 w-4 text-red-600 focus:ring-red-500 border-gray-600 rounded-md bg-gray-700">
+                <label for="useLLM" class="text-sm font-medium text-gray-400">Use LLM to generate headlines</label>
+            </div>
+            <button id="connectButton" class="w-full px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors duration-200">Connect to Twitch</button>
+            <p id="connectionStatus" class="text-center text-sm font-bold"></p>
+        </div>
+
+        <div class="mt-8 flex items-center space-x-2">
+            <input type="text" id="chatMessageInput" placeholder="Or add a message manually..." class="flex-1 p-2 rounded-md bg-gray-700 text-gray-200 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-red-500">
+            <button id="addButton" class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors duration-200">Add</button>
+        </div>
+    </div>
+
+    <div id="ticker" class="ticker-container">
+        <div id="tickerContent" class="ticker-content"></div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInWithCustomToken, onAuthStateChanged, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, onSnapshot, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // Firebase global variables. DO NOT CHANGE.
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let db;
+        let auth;
+        let userId;
+
+        const configPanel = document.getElementById('config-panel');
+        const tickerContent = document.getElementById('tickerContent');
+        const chatMessageInput = document.getElementById('chatMessageInput');
+        const addButton = document.getElementById('addButton');
+        const twitchChannelInput = document.getElementById('twitchChannel');
+        const twitchOAuthInput = document.getElementById('twitchOAuth');
+        const connectButton = document.getElementById('connectButton');
+        const connectionStatus = document.getElementById('connectionStatus');
+        const useLLMCheckbox = document.getElementById('useLLM');
+
+        // A queue to hold our messages.
+        const messageQueue = [];
+        let ws;
+
+        // Sensational news templates. The {} is a placeholder for the chat message.
+        const chatTemplates = [
+            'SHOCKING! {username} claims "{message}"!',
+            'BREAKING: Sources reveal {username} said "{message}".',
+            'INVESTIGATION LAUNCHED after {username} claims "{message}".',
+            'Is this a SIGN? {username} warns "{message}".',
+            'EXPOSED: "{message}" is the secret new strategy, says {username}.',
+            'GLOBAL OUTCRY as {username} demands "{message}"!',
+            'They said it couldn\'t be done, but {username} just proved "{message}".',
+            'YOU WONT BELIEVE what {username} said: "{message}"'
+        ];
+
+        async function sensationalizeMessageWithLLM(username, message) {
+            const systemPrompt = "You are a sensational, over-the-top news anchor for a live video game stream. Rewrite the following user's chat message as a shocking, clickbait news headline. Start the headline with an attention-grabbing word like 'BREAKING', 'SHOCKING', or 'URGENT'. The headline should not include any quotations or be a question. The headline should be short and direct.";
+            const userQuery = `The username is ${username}. The message is: ${message}. This is a standard chat message.`;
+            const apiKey = "";
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+
+            const payload = {
+                contents: [{ parts: [{ text: userQuery }] }],
+                systemInstruction: {
+                    parts: [{ text: systemPrompt }]
+                }
+            };
+            
+            try {
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                const result = await response.json();
+                const text = result?.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (text) {
+                    return text.trim();
+                }
+            } catch (error) {
+                console.error("LLM generation failed:", error);
+            }
+            
+            // Fallback to a static template if the LLM call fails
+            const randomTemplateIndex = Math.floor(Math.random() * chatTemplates.length);
+            return chatTemplates[randomTemplateIndex].replace('{username}', username).replace('{message}', message);
+        }
+
+        async function generateAndAddHeadline() {
+            if (messageQueue.length === 0) {
+                return;
+            }
+
+            const messageObj = messageQueue.shift();
+            
+            let headline;
+            if (useLLMCheckbox.checked) {
+                headline = await sensationalizeMessageWithLLM(messageObj.username, messageObj.message);
+            } else {
+                const randomTemplateIndex = Math.floor(Math.random() * chatTemplates.length);
+                headline = chatTemplates[randomTemplateIndex].replace('{username}', messageObj.username).replace('{message}', messageObj.message);
+            }
+            
+            const headlineElement = document.createElement('span');
+            headlineElement.textContent = headline;
+            headlineElement.classList.add('news-item');
+            
+            tickerContent.appendChild(headlineElement);
+        }
+
+        // Ticker animation loop
+        const tickerSpeed = 1.0; // pixels per frame
+        let xOffset = 0;
+        let animationFrameId;
+
+        function animateTicker() {
+            // Check if there are any items to animate
+            if (tickerContent.children.length > 0) {
+                const firstItem = tickerContent.firstElementChild;
+                xOffset -= tickerSpeed;
+                
+                // If the first item has scrolled off-screen, move it to the end
+                if (Math.abs(xOffset) >= firstItem.offsetWidth) {
+                    xOffset += firstItem.offsetWidth;
+                    tickerContent.appendChild(firstItem);
+                }
+                
+                tickerContent.style.transform = `translateX(${xOffset}px)`;
+            }
+            animationFrameId = requestAnimationFrame(animateTicker);
+        }
+
+        // Start the animation loop when the window loads
+        window.onload = function () {
+            animateTicker();
+        }
+
+        // Periodically add new headlines from the queue
+        setInterval(generateAndAddHeadline, 5000);
+
+        // Input handling for adding messages manually
+        addButton.addEventListener('click', () => {
+            const message = chatMessageInput.value.trim();
+            if (message) {
+                messageQueue.push({ username: "Manual", message: message, isRedeem: false });
+                chatMessageInput.value = '';
+            }
+        });
+
+        chatMessageInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                addButton.click();
+            }
+        });
+
+        // Twitch connection logic
+        function connectToTwitch(channel, oauth) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.close();
+            }
+
+            if (!channel || !oauth) {
+                connectionStatus.textContent = "Please enter channel and token.";
+                connectionStatus.classList.remove('text-green-500', 'text-red-500');
+                connectionStatus.classList.add('text-yellow-500');
+                return;
+            }
+
+            connectionStatus.textContent = "Connecting...";
+            connectionStatus.classList.remove('text-green-500', 'text-red-500', 'text-yellow-500');
+
+            ws = new WebSocket('wss://irc-ws.chat.twitch.tv:443');
+
+            ws.onopen = () => {
+                ws.send('CAP REQ :twitch.tv/tags twitch.tv/commands twitch.tv/membership');
+                ws.send(`PASS ${oauth}`);
+                ws.send(`NICK justinfan123`);
+                ws.send(`JOIN #${channel.toLowerCase()}`);
+                console.log("Connected to Twitch IRC");
+                connectionStatus.textContent = "Connected to Twitch!";
+                connectionStatus.classList.remove('text-yellow-500', 'text-red-500');
+                connectionStatus.classList.add('text-green-500');
+            };
+
+            ws.onmessage = (event) => {
+                const message = event.data;
+
+                // Check for PING to pong back
+                if (message.startsWith('PING')) {
+                    ws.send('PONG :tmi.twitch.tv');
+                    return;
+                }
+                
+                const messageContentMatch = message.match(/:[^ ]+ PRIVMSG #[^ ]+ :(.+)/);
+                const isPrivmsg = message.includes('PRIVMSG');
+                
+                if (isPrivmsg && messageContentMatch) {
+                    const tags = {};
+                    const parts = message.split(';');
+                    parts.forEach(part => {
+                        const [key, value] = part.split('=');
+                        if (key && value) {
+                            tags[key.trim()] = value.trim();
+                        }
+                    });
+
+                    let username = tags['display-name'];
+                    let messageContent = messageContentMatch[1];
+                    messageQueue.push({ username, message: messageContent, isRedeem: false });
+                }
+            };
+
+            ws.onclose = () => {
+                console.log("Disconnected from Twitch IRC");
+                connectionStatus.textContent = "Disconnected from Twitch.";
+                connectionStatus.classList.remove('text-green-500', 'text-yellow-500');
+                connectionStatus.classList.add('text-red-500');
+            };
+
+            ws.onerror = (error) => {
+                console.error("Twitch WebSocket error:", error);
+                connectionStatus.textContent = "Failed to connect to Twitch.";
+                connectionStatus.classList.remove('text-green-500', 'text-yellow-500');
+                connectionStatus.classList.add('text-red-500');
+            };
+        }
+
+        // Initialize Firebase and set up listeners
+        document.addEventListener('DOMContentLoaded', async () => {
+            const urlParams = new URLSearchParams(window.location.search);
+            const mode = urlParams.get('mode');
+
+            if (mode === 'ticker') {
+                // If in ticker mode, hide the configuration panel
+                configPanel.style.display = 'none';
+                document.body.style.backgroundColor = 'rgba(0, 0, 0, 0)';
+            } else {
+                // Otherwise, show the full configuration panel
+                document.body.classList.remove('bg-gray-900', 'text-gray-100');
+                document.body.classList.add('bg-gray-900', 'text-gray-100');
+            }
+
+
+            if (Object.keys(firebaseConfig).length > 0) {
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        const userDocRef = doc(db, `artifacts/${appId}/users/${userId}/settings/twitch_settings`);
+                        
+                        // Listen for changes to the user's settings document
+                        onSnapshot(userDocRef, (docSnap) => {
+                            if (docSnap.exists()) {
+                                const data = docSnap.data();
+                                twitchChannelInput.value = data.channel || '';
+                                twitchOAuthInput.value = data.oauth || '';
+                                useLLMCheckbox.checked = data.useLLM || false;
+
+                                if (data.channel && data.oauth) {
+                                    connectToTwitch(data.channel, data.oauth);
+                                }
+                            }
+                        });
+                    } else {
+                        try {
+                            if (initialAuthToken) {
+                                await signInWithCustomToken(auth, initialAuthToken);
+                            } else {
+                                await signInAnonymously(auth);
+                            }
+                        } catch (error) {
+                            console.error("Firebase Auth Error:", error);
+                        }
+                    }
+                });
+
+                // Button to save Twitch settings
+                connectButton.addEventListener('click', async () => {
+                    if (userId) {
+                        const channel = twitchChannelInput.value.trim();
+                        const oauth = twitchOAuthInput.value.trim();
+                        const useLLM = useLLMCheckbox.checked;
+
+                        if (channel && oauth) {
+                            const userDocRef = doc(db, `artifacts/${appId}/users/${userId}/settings/twitch_settings`);
+                            await setDoc(userDocRef, { channel, oauth, useLLM });
+                        }
+                    }
+                });
+            } else {
+                console.log("Firebase config not available. Running in offline mode.");
+                connectButton.addEventListener('click', () => {
+                    const channel = twitchChannelInput.value.trim();
+                    const oauth = twitchOAuthInput.value.trim();
+                    connectToTwitch(channel, oauth);
+                });
+            }
+        });
+    </script>
+</body>
+</html>
