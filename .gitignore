@@ -1,0 +1,54 @@
+# Created by venv; see https://docs.python.org/3/library/venv.html
+# Environment variables (your secrets!)
+.env
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+
+# Virtual environment
+venv/
+env/
+.venv/
+.env/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+
+# If you add database persistence later
+*.db
+*.sqlite
+*.sqlite3
+headlines.db
+
+# Local data folders
+data/
+cache/
+temp/
+
+OllamaSetup.exe
+firsttest.html
+get-pip.py
