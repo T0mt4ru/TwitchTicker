@@ -1,7 +1,7 @@
 # Created by venv; see https://docs.python.org/3/library/venv.html
 # Environment variables (your secrets!)
 .env
-.gitignore
+
 # Python bytecode
 __pycache__/
 *.py[cod]
